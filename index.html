@@ -130,16 +130,36 @@
   }
 
   /* Seat row */
+  .seat-wrapper {
+    position: relative; overflow: hidden; border-radius: 10px;
+  }
+  .seat-actions {
+    position: absolute; top: 0; bottom: 0; display: flex; align-items: stretch;
+  }
+  .seat-actions.left { left: 0; }
+  .seat-actions.right { right: 0; }
+  .seat-action-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 72px; border: none; cursor: pointer;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.05em;
+    text-transform: uppercase; font-family: 'JetBrains Mono', monospace;
+  }
+  .seat-action-btn.edit { background: #3b82f6; color: #fff; }
+  .seat-action-btn.remove { background: #ef4444; color: #fff; }
+  .seat-slide {
+    position: relative; z-index: 1; transition: transform 0.25s ease;
+    touch-action: pan-y;
+  }
   .seat-row {
     display: flex; align-items: center; border-radius: 10px;
-    padding: 10px 12px; min-height: 42px; transition: all 0.15s;
+    padding: 10px 12px; min-height: 42px;
     border-left: 3px solid #242a3a;
   }
   .seat-row.filled { background: #161a26; padding: 8px 12px; }
   .seat-row.empty { background: #0f1118; cursor: pointer; }
   .seat-num { font-size: 11px; font-weight: 800; color: #475569; width: 24px; flex-shrink: 0; }
   .seat-empty-label { font-size: 12px; color: #2a3040; }
-  .seat-remove { margin-left: 8px; font-size: 16px; color: #475569; cursor: pointer; padding: 4px; flex-shrink: 0; background: none; border: none; }
+  .seat-expand { margin-left: 8px; font-size: 10px; color: #64748b; cursor: pointer; padding: 4px 6px; flex-shrink: 0; background: #1e2231; border: 1px solid #2a3040; border-radius: 6px; line-height: 1; }
 
   .assign-picker {
     margin-top: 12px; background: #161a26; border-radius: 14px;
@@ -191,9 +211,11 @@ let state = {
   view: "database",
   search: "",
   editing: null,
-  seats: [null,null,null,null,null,null,null,null],
+  seats: [null,null,null,null,null,null,null,null,null,null],
+  seatCount: 9,
   assignSeat: null,
   filterTag: null,
+  expandedSeats: {},
 };
 
 function getTagColor(tag) {
@@ -224,12 +246,20 @@ function tagHTML(tag, selected, small, clickAction, showX) {
   return `<span class="${cls}" style="background:${bg};color:${fg};border-color:${c}"${click}>${esc(tag)}${xBtn}</span>`;
 }
 
+function alphaSort(a, b) {
+  const na = a.name.toLowerCase(), nb = b.name.toLowerCase();
+  const aNum = /^\d/.test(na), bNum = /^\d/.test(nb);
+  if (aNum && !bNum) return -1;
+  if (!aNum && bNum) return 1;
+  return na.localeCompare(nb, undefined, { numeric: true });
+}
+
 function getFiltered() {
   return state.players.filter(p => {
     const ms = !state.search || p.name.toLowerCase().includes(state.search.toLowerCase()) || (p.notes||"").toLowerCase().includes(state.search.toLowerCase());
     const mt = !state.filterTag || (p.tags||[]).includes(state.filterTag);
     return ms && mt;
-  }).sort((a,b) => (b.updatedAt||"").localeCompare(a.updatedAt||""));
+  }).sort(alphaSort);
 }
 
 // ─── Render ───
@@ -268,6 +298,65 @@ function render() {
   }
 
   app.innerHTML = html;
+  setupSwipe();
+}
+
+function setupSwipe() {
+  const THRESHOLD = 72;
+  document.querySelectorAll('.seat-slide').forEach(el => {
+    let startX = 0, startY = 0, currentX = 0, swiping = false, locked = false;
+    
+    el.addEventListener('touchstart', e => {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      currentX = 0; swiping = false; locked = false;
+      el.style.transition = 'none';
+    }, { passive: true });
+
+    el.addEventListener('touchmove', e => {
+      const dx = e.touches[0].clientX - startX;
+      const dy = e.touches[0].clientY - startY;
+      
+      // Decide direction lock on first significant move
+      if (!locked) {
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+          locked = true;
+          swiping = Math.abs(dx) > Math.abs(dy);
+        }
+        if (!locked) return;
+      }
+      if (!swiping) return;
+      
+      e.preventDefault();
+      // Clamp between -THRESHOLD and +THRESHOLD
+      currentX = Math.max(-THRESHOLD, Math.min(THRESHOLD, dx));
+      el.style.transform = `translateX(${currentX}px)`;
+    }, { passive: false });
+
+    el.addEventListener('touchend', () => {
+      el.style.transition = 'transform 0.25s ease';
+      const seat = parseInt(el.dataset.seat);
+      
+      if (currentX < -THRESHOLD * 0.5) {
+        // Swiped left far enough — snap open to reveal Remove
+        el.style.transform = `translateX(-${THRESHOLD}px)`;
+        // Auto-close after 3s
+        setTimeout(() => {
+          if (el.parentNode) { el.style.transform = 'translateX(0)'; }
+        }, 3000);
+      } else if (currentX > THRESHOLD * 0.5) {
+        // Swiped right far enough — snap open to reveal Edit
+        el.style.transform = `translateX(${THRESHOLD}px)`;
+        setTimeout(() => {
+          if (el.parentNode) { el.style.transform = 'translateX(0)'; }
+        }, 3000);
+      } else {
+        // Snap back
+        el.style.transform = 'translateX(0)';
+      }
+      swiping = false;
+    }, { passive: true });
+  });
 }
 
 function renderDatabase() {
@@ -320,30 +409,57 @@ function renderTable() {
 
   // Header
   h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <span class="field-label">Villains (8 seats)</span>
-    <button class="data-btn" style="flex:none;margin:0" onclick="clearTable()">Clear All</button>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="field-label" style="white-space:nowrap">Seats</span>
+      <select onchange="setSeatCount(parseInt(this.value))" style="
+        background:#1e2231;color:#22d3ee;border:1px solid #2a3040;border-radius:8px;
+        padding:4px 8px;font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;
+        outline:none;cursor:pointer;-webkit-appearance:none;appearance:none;
+        text-align:center;min-width:44px;
+      ">`;
+  for (let n = 2; n <= 10; n++) {
+    h += `<option value="${n}" ${state.seatCount===n?'selected':''}>${n}</option>`;
+  }
+  h += `</select>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="data-btn" style="flex:none;margin:0;border-color:#3b82f6;color:#3b82f6" onclick="collapseAll()">Collapse All</button>
+      <button class="data-btn" style="flex:none;margin:0" onclick="clearTable()">Clear All</button>
+    </div>
   </div>`;
 
-  // 8 seat rows
+  // Seat rows
   h += `<div style="display:flex;flex-direction:column;gap:4px">`;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < state.seatCount; i++) {
     const id = state.seats[i];
     const p = id ? state.players.find(pl => pl.id === id) : null;
     const bc = p ? getTagColor((p.tags||[])[0] || "unknown") : "#242a3a";
 
     if (p) {
-      h += `<div class="seat-row filled" style="border-left-color:${bc}">
-        <span class="seat-num">${i+1}</span>
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span style="font-size:14px;font-weight:700;color:#e2e8f0;font-family:'Playfair Display',serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</span>`;
+      const expanded = !!state.expandedSeats[i];
+      h += `<div class="seat-wrapper" id="seat-wrap-${i}">
+        <div class="seat-actions left"><button class="seat-action-btn edit" onclick="editPlayer('${p.id}')">Edit</button></div>
+        <div class="seat-actions right"><button class="seat-action-btn remove" onclick="removeSeat(${i})">Remove</button></div>
+        <div class="seat-slide" id="seat-slide-${i}" data-seat="${i}">
+          <div class="seat-row filled" style="border-left-color:${bc};flex-direction:column;align-items:stretch">
+            <div style="display:flex;align-items:center">
+              <span class="seat-num">${i+1}</span>
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span style="font-size:14px;font-weight:700;color:#e2e8f0;font-family:'Playfair Display',serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</span>`;
       for (const t of (p.tags||[])) h += tagHTML(t, true, true);
       h += `</div>`;
-      if (p.notes) {
+      if (p.notes && !expanded) {
         h += `<p style="margin:3px 0 0;font-size:11px;color:#64748b;line-height:1.3;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical">${esc(p.notes)}</p>`;
       }
       h += `</div>
-        <button class="seat-remove" onclick="removeSeat(${i})">×</button>
+              <button class="seat-expand" onclick="toggleSeatExpand(${i})" title="${expanded?'Collapse':'Expand'}">${expanded?'▲':'▼'}</button>
+            </div>`;
+      if (expanded && p.notes) {
+        h += `<div style="margin:6px 0 2px 24px;padding:8px 10px;background:#1e2231;border-radius:8px;font-size:12px;color:#94a3b8;line-height:1.5;white-space:pre-wrap">${esc(p.notes)}</div>`;
+      }
+      h += `</div>
+        </div>
       </div>`;
     } else {
       h += `<div class="seat-row empty" onclick="startAssign(${i})">
@@ -488,8 +604,11 @@ function deletePlayer(id) {
 // Table actions
 function startAssign(i) { state.assignSeat = i; state.search = ""; render(); }
 function cancelAssign() { state.assignSeat = null; state.search = ""; render(); }
-function removeSeat(i) { state.seats[i] = null; render(); }
-function clearTable() { state.seats = [null,null,null,null,null,null,null,null]; render(); }
+function removeSeat(i) { state.seats[i] = null; delete state.expandedSeats[i]; render(); }
+function clearTable() { state.seats = [null,null,null,null,null,null,null,null,null,null]; state.expandedSeats = {}; render(); }
+function setSeatCount(n) { state.seatCount = n; state.assignSeat = null; render(); }
+function toggleSeatExpand(i) { if (state.expandedSeats[i]) delete state.expandedSeats[i]; else state.expandedSeats[i] = true; render(); }
+function collapseAll() { state.expandedSeats = {}; render(); }
 
 function assignPlayer(id) {
   // Remove from any existing seat
