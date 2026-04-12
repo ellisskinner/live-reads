@@ -120,13 +120,14 @@
 
   /* FAB */
   .fab {
-    position: fixed; bottom: 24px; right: calc(50% - 28px);
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
     width: 56px; height: 56px; border-radius: 50%;
     background: linear-gradient(135deg, #22d3ee, #3b82f6); color: #0f1118;
-    border: none; font-size: 28px; font-weight: 900; cursor: pointer;
+    border: none; font-size: 30px; font-weight: 900; cursor: pointer;
     box-shadow: 0 4px 20px rgba(34,211,238,0.35);
     display: flex; align-items: center; justify-content: center; z-index: 50;
-    padding-bottom: env(safe-area-inset-bottom, 0);
+    padding: 0; margin: 0; line-height: 1;
+    margin-bottom: env(safe-area-inset-bottom, 0);
   }
 
   /* Seat row */
@@ -199,11 +200,20 @@
 // ─── State ───
 const STORAGE_KEY = "poker-tracker-data";
 const TAGS_KEY = "poker-tracker-tags";
+const TAG_COLORS_KEY = "poker-tracker-tag-colors";
 const DEFAULT_TAGS = ["whale","reg","nit","LAG","TAG","maniac","calling station","unknown"];
-const TAG_COLORS = {
+const DEFAULT_TAG_COLORS = {
   whale:"#22d3ee", reg:"#f59e0b", nit:"#94a3b8", LAG:"#ef4444",
   TAG:"#3b82f6", maniac:"#f43f5e", "calling station":"#a78bfa", unknown:"#6b7280"
 };
+const COLOR_SWATCHES = [
+  "#22d3ee","#3b82f6","#a78bfa","#8b5cf6",
+  "#f43f5e","#ef4444","#f59e0b","#eab308",
+  "#22c55e","#10b981","#06b6d4","#ec4899",
+  "#94a3b8","#6b7280","#f97316","#84cc16"
+];
+
+let customTagColors = {};
 
 let state = {
   players: [],
@@ -216,10 +226,12 @@ let state = {
   assignSeat: null,
   filterTag: null,
   expandedSeats: {},
+  colorPickerTag: null,
 };
 
 function getTagColor(tag) {
-  if (TAG_COLORS[tag]) return TAG_COLORS[tag];
+  if (customTagColors[tag]) return customTagColors[tag];
+  if (DEFAULT_TAG_COLORS[tag]) return DEFAULT_TAG_COLORS[tag];
   let h = 0;
   for (let i = 0; i < tag.length; i++) h = tag.charCodeAt(i) + ((h << 5) - h);
   return `hsl(${Math.abs(h) % 360}, 55%, 55%)`;
@@ -228,22 +240,25 @@ function getTagColor(tag) {
 function load() {
   try { state.players = JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { state.players = []; }
   try { const t = JSON.parse(localStorage.getItem(TAGS_KEY)); if (t && t.length) state.tags = t; } catch {}
+  try { const c = JSON.parse(localStorage.getItem(TAG_COLORS_KEY)); if (c) customTagColors = c; } catch {}
 }
 
 function savePlayers() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.players)); }
 function saveTags() { localStorage.setItem(TAGS_KEY, JSON.stringify(state.tags)); }
+function saveTagColors() { localStorage.setItem(TAG_COLORS_KEY, JSON.stringify(customTagColors)); }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ─── Render helpers ───
-function tagHTML(tag, selected, small, clickAction, showX) {
+function tagHTML(tag, selected, small, clickAction, showX, longPressable) {
   const c = getTagColor(tag);
   const cls = small ? "tag sm" : "tag";
   const bg = selected ? c : "transparent";
   const fg = selected ? "#0f1118" : c;
   const click = clickAction ? ` onclick="${clickAction}"` : "";
+  const lp = longPressable ? ` data-longpress-tag="${esc(tag)}"` : "";
   const xBtn = showX ? `<span class="x" onclick="event.stopPropagation();${showX}">×</span>` : "";
-  return `<span class="${cls}" style="background:${bg};color:${fg};border-color:${c}"${click}>${esc(tag)}${xBtn}</span>`;
+  return `<span class="${cls}" style="background:${bg};color:${fg};border-color:${c}"${click}${lp}>${esc(tag)}${xBtn}</span>`;
 }
 
 function alphaSort(a, b) {
@@ -299,6 +314,7 @@ function render() {
 
   app.innerHTML = html;
   setupSwipe();
+  setupLongPress();
 }
 
 function setupSwipe() {
@@ -359,22 +375,46 @@ function setupSwipe() {
   });
 }
 
+function setupLongPress() {
+  let timer = null;
+  let fired = false;
+  document.querySelectorAll('[data-longpress-tag]').forEach(el => {
+    const tag = el.dataset.longpressTag;
+    
+    el.addEventListener('touchstart', e => {
+      fired = false;
+      timer = setTimeout(() => {
+        fired = true;
+        _longPressJustFired = true;
+        state.colorPickerTag = tag;
+        render();
+      }, 500);
+    }, { passive: true });
+
+    el.addEventListener('touchend', e => {
+      clearTimeout(timer);
+      if (fired) { e.preventDefault(); e.stopPropagation(); }
+    });
+
+    el.addEventListener('touchmove', () => {
+      clearTimeout(timer);
+    }, { passive: true });
+  });
+}
+
+function setTagColor(tag, color) {
+  customTagColors[tag] = color;
+  saveTagColors();
+  state.colorPickerTag = null;
+  render();
+}
+
 function renderDatabase() {
   const filtered = getFiltered();
   let h = `<div style="padding:16px 20px">`;
 
   // Search
   h += `<input class="search-input" value="${esc(state.search)}" oninput="state.search=this.value;render()" placeholder="Search players...">`;
-
-  // Tag filter
-  h += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">`;
-  if (state.filterTag) {
-    h += `<span class="tag sm" style="background:#ef4444;color:#fff;border-color:#ef4444" onclick="state.filterTag=null;render()">✕ clear</span>`;
-  }
-  for (const t of state.tags) {
-    h += tagHTML(t, state.filterTag===t, true, `toggleFilter('${esc(t)}')`);
-  }
-  h += `</div>`;
 
   // Player list
   h += `<div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">`;
@@ -516,19 +556,40 @@ function renderEditor() {
     <input class="field-input" value="${esc(window._edit.name)}" oninput="window._edit.name=this.value" placeholder="e.g. Red Hat Mike" style="margin-bottom:16px">`;
 
   // Tags
-  h += `<label class="field-label">Tags</label>
+  h += `<label class="field-label">Tags <span style="font-weight:400;color:#3a4255;text-transform:none;letter-spacing:0">(long-press to change color)</span></label>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;margin-bottom:8px">`;
   for (const t of state.tags) {
     const sel = window._edit.tags.includes(t);
-    h += tagHTML(t, sel, false, `toggleEditTag('${esc(t)}')`);
+    h += tagHTML(t, sel, false, `toggleEditTag('${esc(t)}')`, false, true);
   }
   // Show any custom tags on the player not in master list
   for (const t of window._edit.tags) {
     if (!state.tags.includes(t)) {
-      h += tagHTML(t, true, false, `toggleEditTag('${esc(t)}')`);
+      h += tagHTML(t, true, false, `toggleEditTag('${esc(t)}')`, false, true);
     }
   }
   h += `</div>`;
+
+  // Color picker (shown when a tag is long-pressed)
+  if (state.colorPickerTag) {
+    const currentColor = getTagColor(state.colorPickerTag);
+    h += `<div style="background:#1e2231;border:1px solid #2a3040;border-radius:12px;padding:12px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span style="font-size:12px;color:#e2e8f0;font-weight:700">Color for <span style="color:${currentColor}">${esc(state.colorPickerTag)}</span></span>
+        <button onclick="state.colorPickerTag=null;render()" style="background:none;border:none;color:#64748b;font-size:16px;cursor:pointer">×</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">`;
+    for (const c of COLOR_SWATCHES) {
+      const isCurrent = currentColor === c;
+      h += `<div onclick="setTagColor('${esc(state.colorPickerTag)}','${c}')" style="
+        width:32px;height:32px;border-radius:50%;background:${c};cursor:pointer;
+        border:${isCurrent ? '3px solid #fff' : '2px solid transparent'};
+        box-shadow:${isCurrent ? '0 0 8px '+c : 'none'};
+      "></div>`;
+    }
+    h += `</div></div>`;
+  }
+
   h += `<div style="display:flex;gap:8px;margin-bottom:16px">
     <input class="field-input" id="new-tag-input" placeholder="+ custom tag" style="flex:1;margin-top:0;font-size:14px;padding:8px 12px" onkeydown="if(event.key==='Enter')addEditTag()">
     <button style="padding:8px 16px;background:#22d3ee;color:#0f1118;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:'JetBrains Mono',monospace" onclick="addEditTag()">Add</button>
@@ -555,9 +616,11 @@ function switchView(v) { state.view = v; state.assignSeat = null; state.search =
 function toggleFilter(tag) { state.filterTag = state.filterTag === tag ? null : tag; render(); }
 function newPlayer() { state.editing = "new"; window._edit = { name:"", notes:"", tags:[] }; render(); }
 function editPlayer(id) { state.editing = id; const p = state.players.find(x=>x.id===id); window._edit = { name:p.name, notes:p.notes||"", tags:[...(p.tags||[])] }; render(); }
-function closeEditor() { state.editing = null; window._edit = null; render(); }
+function closeEditor() { state.editing = null; window._edit = null; state.colorPickerTag = null; render(); }
 
+let _longPressJustFired = false;
 function toggleEditTag(tag) {
+  if (_longPressJustFired) { _longPressJustFired = false; return; }
   if (!window._edit) return;
   const i = window._edit.tags.indexOf(tag);
   if (i > -1) window._edit.tags.splice(i,1); else window._edit.tags.push(tag);
@@ -621,7 +684,7 @@ function assignPlayer(id) {
 
 // Export / Import
 function exportData() {
-  const data = { players: state.players, tags: state.tags };
+  const data = { players: state.players, tags: state.tags, tagColors: customTagColors };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -637,7 +700,6 @@ function importData(event) {
     try {
       const data = JSON.parse(e.target.result);
       if (data.players && Array.isArray(data.players)) {
-        // Merge: add new players, update existing by id
         for (const p of data.players) {
           const idx = state.players.findIndex(x => x.id === p.id);
           if (idx > -1) state.players[idx] = p; else state.players.push(p);
@@ -648,8 +710,12 @@ function importData(event) {
         for (const t of data.tags) { if (!state.tags.includes(t)) state.tags.push(t); }
         saveTags();
       }
+      if (data.tagColors && typeof data.tagColors === 'object') {
+        Object.assign(customTagColors, data.tagColors);
+        saveTagColors();
+      }
       render();
-      alert("Import successful! " + data.players.length + " players loaded.");
+      alert("Import successful! " + (data.players||[]).length + " players loaded.");
     } catch (err) {
       alert("Invalid file format.");
     }
