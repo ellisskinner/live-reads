@@ -302,8 +302,8 @@ function render() {
 
   // Data actions
   html += `<div class="data-actions">
-    <button class="data-btn" onclick="exportData()">Export JSON</button>
-    <button class="data-btn" onclick="document.getElementById('import-file').click()">Import JSON</button>
+    <button class="data-btn" onclick="exportData()">Export Profiles</button>
+    <button class="data-btn" onclick="document.getElementById('import-file').click()">Import Profiles</button>
     <input type="file" id="import-file" accept=".json" class="hidden" onchange="importData(event)">
   </div>`;
 
@@ -686,10 +686,18 @@ function assignPlayer(id) {
 function exportData() {
   const data = { players: state.players, tags: state.tags, tagColors: customTagColors };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = "live-reads-backup.json"; a.click();
-  URL.revokeObjectURL(url);
+  const file = new File([blob], "live-reads-backup.json", { type: "application/json" });
+
+  // Use share sheet on mobile (gives Save to Files option on iOS)
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: "Live Reads Backup" }).catch(() => {});
+  } else {
+    // Fallback for desktop
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "live-reads-backup.json"; a.click();
+    URL.revokeObjectURL(url);
+  }
 }
 
 function importData(event) {
@@ -730,3 +738,4 @@ render();
 </script>
 </body>
 </html>
+
